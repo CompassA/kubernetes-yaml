@@ -1,0 +1,36 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  namespace: tomato
+  name: zookeeper-set
+spec:
+  serviceName: zookeeper
+  replicas: 1
+  selector:
+    matchLabels:
+      app: zookeeper
+  template:
+    metadata:
+      namespace: tomato
+      labels:
+        app: zookeeper
+    spec:
+      containers:
+      - name: zookeeper
+        image: zookeeper:3.5.9
+        ports:
+          - containerPort: 2181
+        volumeMounts:
+          - name: data-pvc
+            mountPath: /data 
+  volumeClaimTemplates:
+    - metadata:
+        namespace: tomato
+        name: data-pvc
+      spec:
+        storageClassName: manual
+        accessModes:
+          - ReadWriteOnce
+        resources:
+          requests:
+            storage: 1Gi         
