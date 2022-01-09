@@ -1,0 +1,21 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  namespace: tomato
+  name: busy-box-deployment
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: busy-box
+  template:
+    metadata:
+      name: busy-box
+      labels:
+        app: busy-box
+    spec:
+      containers:
+        - name: bosy-box
+          image: busybox:1.27
+          stdin: true
+          tty: true  
