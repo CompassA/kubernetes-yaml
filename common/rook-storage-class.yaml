@@ -1,0 +1,23 @@
+# git submodule add  git@github.com:rook/rook.git
+# cd rook/deploy/examples
+# git checkout v1.8.6
+# kubectl create -f crds.yaml -f common.yaml -f operator.yaml
+# kubectl create -f cluster.yaml
+apiVersion: ceph.rook.io/v1beta1
+kind: Pool
+metadata:
+  name: replicapool
+  namespace: rook-ceph
+spec:
+  replicated:
+    size: 3
+---
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  namespace: tomato
+  name: rook-ceph-block
+provisioner: ceph.rook.io/block
+parameters:
+  pool: replicapool
+  clusterNamespace: rook-ceph

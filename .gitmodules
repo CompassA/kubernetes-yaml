@@ -1,0 +1,3 @@
+[submodule "rook"]
+	path = rook
+	url = git@github.com:rook/rook.git
