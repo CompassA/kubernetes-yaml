@@ -1,10 +1,21 @@
 # git submodule add  git@github.com:rook/rook.git
-# cd rook/deploy/examples
 # git checkout v1.8.6
-# kubectl create -f crds.yaml -f common.yaml -f operator.yaml
-# kubectl create -f cluster.yaml
-apiVersion: ceph.rook.io/v1beta1
-kind: Pool
+# cd rook/deploy/examples
+# kubectl apply -f crds.yaml -f common.yaml -f operator.yaml &&
+# kubectl apply -f cluster.yaml
+# docker pull compassa/csi-snapshotter:v5.0.1 &&\
+# docker pull compassa/csi-resizer:v1.4.0 &&\
+# docker pull compassa/csi-provisioner:v3.1.0 &&\
+# docker pull compassa/csi-attacher:v3.4.0 &&\
+# docker pull compassa/csi-node-driver-registrar:v2.5.0 &&\  
+# docker tag compassa/csi-snapshotter:v5.0.1 k8s.gcr.io/sig-storage/csi-snapshotter:v5.0.1 &&\
+# docker tag compassa/csi-resizer:v1.4.0 k8s.gcr.io/sig-storage/csi-resizer:v1.4.0 &&\
+# docker tag compassa/csi-provisioner:v3.1.0 k8s.gcr.io/sig-storage/csi-provisioner:v3.1.0 &&\
+# docker tag compassa/csi-attacher:v3.4.0 k8s.gcr.io/sig-storage/csi-attacher:v3.4.0 &&\
+# docker tag compassa/csi-node-driver-registrar:v2.5.0 k8s.gcr.io/sig-storage/csi-node-driver-registrar:v2.5.0   
+# 
+apiVersion: ceph.rook.io/v1
+kind: CephBlockPool
 metadata:
   name: replicapool
   namespace: rook-ceph
@@ -17,7 +28,17 @@ kind: StorageClass
 metadata:
   namespace: tomato
   name: rook-ceph-block
-provisioner: ceph.rook.io/block
+provisioner: rook-ceph.rbd.csi.ceph.com
 parameters:
+  clusterID: rook-ceph
+  imageFormat: "2"
+  imageFeatures: layering
   pool: replicapool
   clusterNamespace: rook-ceph
+
+# Delete the rbd volume when a PVC is deleted
+reclaimPolicy: Delete
+
+# Optional, if you want to add dynamic resize for PVC. Works for Kubernetes 1.14+
+# For now only ext3, ext4, xfs resize support provided, like in Kubernetes itself.
+allowVolumeExpansion: true
