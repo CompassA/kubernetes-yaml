@@ -9,7 +9,7 @@ metadata:
 spec:
   storageClassName: manual
   capacity: 
-    storage: 1Gi
+    storage: 4Gi
   accessModes:
     - ReadWriteOnce
   persistentVolumeReclaimPolicy: Recycle
@@ -26,7 +26,7 @@ metadata:
 spec:
   storageClassName: manual
   capacity: 
-    storage: 1Gi
+    storage: 4Gi
   accessModes:
     - ReadWriteOnce
   persistentVolumeReclaimPolicy: Recycle
@@ -43,7 +43,7 @@ metadata:
 spec:
   storageClassName: manual
   capacity: 
-    storage: 1Gi
+    storage: 4Gi
   accessModes:
     - ReadWriteOnce
   persistentVolumeReclaimPolicy: Recycle
@@ -60,7 +60,7 @@ metadata:
 spec:
   storageClassName: manual
   capacity: 
-    storage: 1Gi
+    storage: 4Gi
   accessModes:
     - ReadWriteOnce
   persistentVolumeReclaimPolicy: Recycle
@@ -77,7 +77,7 @@ metadata:
 spec:
   storageClassName: manual
   capacity: 
-    storage: 1Gi
+    storage: 4Gi
   accessModes:
     - ReadWriteOnce
   persistentVolumeReclaimPolicy: Recycle
@@ -94,7 +94,7 @@ metadata:
 spec:
   storageClassName: manual
   capacity: 
-    storage: 1Gi
+    storage: 4Gi
   accessModes:
     - ReadWriteOnce
   persistentVolumeReclaimPolicy: Recycle
@@ -111,7 +111,7 @@ metadata:
 spec:
   storageClassName: manual
   capacity: 
-    storage: 1Gi
+    storage: 4Gi
   accessModes:
     - ReadWriteOnce
   persistentVolumeReclaimPolicy: Recycle
