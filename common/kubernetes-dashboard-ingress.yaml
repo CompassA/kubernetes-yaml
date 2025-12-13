@@ -10,12 +10,17 @@ metadata:
     nginx.ingress.kubernetes.io/backend-protocol: "HTTPS"
 spec:
   tls:
-    - secretName: ingress-secret
+    - hosts:
+        - dashboard.example.com
+      secretName: ingress-secret
   rules:
-    - host: "dashboard.example.com"
+    - host: dashboard.example.com
       http:
         paths:
           - path: /
+            pathType: Prefix
             backend:
-              serviceName: kubernetes-dashboard-kong-proxy
-              servicePort: 443
+              service:
+                name: kubernetes-dashboard-kong-proxy
+                port:
+                  number: 443
