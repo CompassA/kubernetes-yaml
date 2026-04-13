@@ -1,5 +1,6 @@
 ---
 ### master headless service
+### mysql-master-0.mysql-master-service.tomato.svc.cluster.local
 apiVersion: v1
 kind: Service
 metadata:
@@ -13,7 +14,7 @@ spec:
     - name: mysql-master-service-port
       protocol: TCP
       port: 3306
-      targetPort: sts-mysqlport
+      targetPort: mysql
 ---
 ### MysqlMaster
 apiVersion: apps/v1
@@ -37,7 +38,44 @@ spec:
         # mysql容器
         - name: mysql
           image: mysql:8.4.7
-          ## 挂载账号密码相关配置至环境变量
+          ## 挂载root密码配置至环境变量
+          env:
+            - name: MYSQL_ROOT_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: mysql-master-secret
+                  key: MYSQL_ROOT_PASSWORD
+          ports:
+            - containerPort: 3306
+              name: mysql
+          resources:
+            requests:
+              cpu: 500m
+              memory: 512Mi
+          livenessProbe:
+            exec:
+              command: ["mysqladmin", "ping"]
+            initialDelaySeconds: 30
+            periodSeconds: 20
+            timeoutSeconds: 10
+          readinessProbe:
+            exec:
+              command:
+                - bash
+                - "-c"
+                - mysql -h 127.0.0.1 -uroot -p${MYSQL_ROOT_PASSWORD} -e "SELECT 1"
+            initialDelaySeconds: 30
+            periodSeconds: 20
+            timeoutSeconds: 10
+          volumeMounts:
+            ## 绑定ConfigMap中的配置文件
+            - name: mysql-master-config
+              mountPath: /etc/mysql/conf.d
+            ## 数据文件绑定pvc
+            - name: mysql-master-data
+              mountPath: /var/lib/mysql
+        - name: xtrabackup
+          image: localhost/my-xtrabackup:8.4
           env:
             - name: MYSQL_ROOT_PASSWORD
               valueFrom:
@@ -55,60 +93,19 @@ spec:
                   name: mysql-master-secret
                   key: MYSQL_MASTER_DUMP_PASSWORD
           ports:
-            - containerPort: 3306
-              name: sts-mysqlport
+            - containerPort: 3307
+              name: xtrabackup
           resources:
             requests:
-              cpu: 500m
-              memory: 512Mi
-          livenessProbe:
-            exec:
-              command: ["mysqladmin", "ping"]
-            initialDelaySeconds: 30
-            periodSeconds: 20
-            timeoutSeconds: 10
-          readinessProbe:
-            exec:
-              command:
-                - bash
-                - "-c"
-                - |
-                  mysql -h 127.0.0.1 -uroot -p${MYSQL_ROOT_PASSWORD} -e "SELECT 1"
-            initialDelaySeconds: 30
-            periodSeconds: 20
-            timeoutSeconds: 10
-          # 创建主从复制的账号与密码
-          lifecycle:
-            postStart:
-              exec:
-                command:
-                  - bash
-                  - "-c"
-                  - |
-                    # 将内容输出到主容器标准输出, 调试用
-                    # exec 1>/proc/1/fd/1 2>/proc/1/fd/2
-                    # 任意一条命令执行失败（返回非零状态码）时，‌立即退出脚本
-                    # 在执行每条命令前，‌将该命令及其参数打印到标准错误输出
-                    set -ex
-
-                    # 等待master节点启动完成
-                    until mysql -h 127.0.0.1 -uroot -p${MYSQL_ROOT_PASSWORD} -e "SELECT 1"; do
-                      echo "Waiting for mysql-master to be ready"
-                      sleep 5
-                    done
-
-                    # 创建主从复制账号与密码
-                    cd /etc/mysql/conf.d
-                    mysql -h 127.0.0.1 -uroot -p${MYSQL_ROOT_PASSWORD} -e "$(<create_replication_account_procedure.sql)"
-                    mysql -h 127.0.0.1 -uroot -p${MYSQL_ROOT_PASSWORD} -e "call mysql.CreateDumpUser('${MYSQL_MASTER_DUMP_USER}', '${MYSQL_MASTER_DUMP_PASSWORD}')"
-                    echo "mysql-master sidecar-task finished"
+              cpu: 100m
+              memory: 128Mi
+          command:
+            - bash
+            - /etc/mysql/conf.d/master_init.sh
           volumeMounts:
             ## 绑定ConfigMap中的配置文件
             - name: mysql-master-config
               mountPath: /etc/mysql/conf.d
-            ## 数据文件绑定pvc
-            - name: mysql-master-data
-              mountPath: /var/lib/mysql
       volumes:
         # ConfigMap配置作为配置文件
         - name: mysql-master-config
@@ -119,6 +116,8 @@ spec:
                 path: master.cnf
               - key: create_replication_account_procedure.sql
                 path: create_replication_account_procedure.sql
+              - key: master_init.sh
+                path: master_init.sh
   volumeClaimTemplates:
     - metadata:
         name: mysql-master-data
@@ -127,4 +126,4 @@ spec:
         accessModes: ["ReadWriteOnce"]
         resources:
           requests:
-            storage: 5Gi
+            storage: 2Gi
