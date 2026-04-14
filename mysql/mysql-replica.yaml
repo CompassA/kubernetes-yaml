@@ -1,0 +1,171 @@
+---
+# headless service
+apiVersion: v1
+kind: Service
+metadata:
+  name: mysql-replica-service
+  namespace: tomato
+spec:
+  selector:
+    app: mysql-replica
+  clusterIP: None
+  ports:
+    - name: mysql-replica-service-port
+      protocol: TCP
+      port: 3306
+      targetPort: replica-port
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: mysql-replica
+  namespace: tomato
+spec:
+  selector:
+    matchLabels:
+      app: mysql-replica
+  serviceName: mysql-replica-service
+  replicas: 3
+  template:
+    metadata:
+      labels:
+        app: mysql-replica
+    spec:
+      terminationGracePeriodSeconds: 10
+      initContainers:
+        # 初始化从库配置与数据
+        - name: init-dump
+          image: localhost/my-xtrabackup:8.4
+          env:
+            - name: PODNAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            - name: MYSQL_ROOT_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: mysql-master-secret
+                  key: MYSQL_ROOT_PASSWORD
+            - name: MASTER_SERVICE
+              value: "mysql-master-0.mysql-master-service.tomato"
+            - name: REPLICA_SERVICE_NAME
+              value: "mysql-replica-service"
+          volumeMounts:
+            # mysql配置目录
+            - name: conf
+              mountPath: /etc/mysql/conf.d
+            # 配置文件
+            - name: mysql-replica-config
+              mountPath: /mnt/configmap
+            # 数据文件
+            - name: replica-data
+              mountPath: /var/lib/mysql
+          command: ["bash", "/mnt/configmap/replica_init.sh"]
+      containers:
+        - name: mysql
+          image: mysql:8.4.7
+          env:
+            - name: MYSQL_ROOT_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: mysql-master-secret
+                  key: MYSQL_ROOT_PASSWORD
+          ports:
+            - containerPort: 3306
+              name: replica-port
+          volumeMounts:
+            # mysql配置目录
+            - name: conf
+              mountPath: /etc/mysql/conf.d
+            # 配置文件
+            - name: mysql-replica-config
+              mountPath: /mnt/configmap
+            # 数据文件
+            - name: replica-data
+              mountPath: /var/lib/mysql
+          resources:
+            requests:
+              cpu: 500m
+              memory: 512Mi
+          livenessProbe:
+            exec:
+              command: ["mysqladmin", "ping"]
+            initialDelaySeconds: 30
+            periodSeconds: 20
+            timeoutSeconds: 10
+          readinessProbe:
+            exec:
+              command:
+                - bash
+                - "-c"
+                - |
+                  mysql -h 127.0.0.1 -uroot -p$MYSQL_ROOT_PASSWORD -e "SELECT 1"
+            initialDelaySeconds: 30
+            periodSeconds: 20
+            timeoutSeconds: 10
+        - name: xtrabackup
+          image: localhost/my-xtrabackup:8.4
+          env:
+            - name: MASTER_SERVICE
+              value: "mysql-master-0.mysql-master-service.tomato"
+            - name: MYSQL_ROOT_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: mysql-master-secret
+                  key: MYSQL_ROOT_PASSWORD
+            - name: MYSQL_MASTER_DUMP_USER
+              valueFrom:
+                secretKeyRef:
+                  name: mysql-master-secret
+                  key: MYSQL_MASTER_DUMP_USER
+            - name: MYSQL_MASTER_DUMP_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: mysql-master-secret
+                  key: MYSQL_MASTER_DUMP_PASSWORD
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+          ports:
+            - containerPort: 3307
+              name: xtrabackup-port
+          command: ["bash", "/mnt/configmap/replica_sidecar.sh"]
+          volumeMounts:
+            # mysql配置目录
+            - name: conf
+              mountPath: /etc/mysql/conf.d
+            # 配置文件
+            - name: mysql-replica-config
+              mountPath: /mnt/configmap
+            # 数据文件
+            - name: replica-data
+              mountPath: /var/lib/mysql
+      volumes:
+        - name: conf
+          emptyDir: {}
+        - name: mysql-replica-config
+          configMap:
+            name: mysql-replica-config
+            items:
+              - key: replica.cnf
+                path: replica.cnf
+              - key: replica_init.sh
+                path: replica_init.sh
+              - key: start_replication_procedure.sql
+                path: start_replication_procedure.sql
+              - key: replica_sidecar.sh
+                path: replica_sidecar.sh
+  volumeClaimTemplates:
+    - metadata:
+        name: replica-data
+      spec:
+        storageClassName: standard # 使用local-path-provisioner
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 2Gi

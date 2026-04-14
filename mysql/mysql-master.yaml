@@ -34,6 +34,18 @@ spec:
         app: mysql-master
     spec:
       terminationGracePeriodSeconds: 10
+      initContainers:
+        - name: init-conf
+          image: mysql:8.4.7
+          command:
+            ["cp", "/mnt/configmap/master.cnf", "/etc/mysql/conf.d/my.cnf"]
+          volumeMounts:
+            ## mysql配置目录
+            - name: conf
+              mountPath: /etc/mysql/conf.d
+            ## 绑定ConfigMap中的配置文件
+            - name: mysql-master-config
+              mountPath: /mnt/configmap
       containers:
         # mysql容器
         - name: mysql
@@ -63,14 +75,17 @@ spec:
               command:
                 - bash
                 - "-c"
-                - mysql -h 127.0.0.1 -uroot -p${MYSQL_ROOT_PASSWORD} -e "SELECT 1"
+                - mysql -h 127.0.0.1 -uroot -p$MYSQL_ROOT_PASSWORD -e "SELECT 1"
             initialDelaySeconds: 30
             periodSeconds: 20
             timeoutSeconds: 10
           volumeMounts:
+            ## mysql配置目录
+            - name: conf
+              mountPath: /etc/mysql/conf.d
             ## 绑定ConfigMap中的配置文件
             - name: mysql-master-config
-              mountPath: /etc/mysql/conf.d
+              mountPath: /mnt/configmap
             ## 数据文件绑定pvc
             - name: mysql-master-data
               mountPath: /var/lib/mysql
@@ -99,14 +114,21 @@ spec:
             requests:
               cpu: 100m
               memory: 128Mi
-          command:
-            - bash
-            - /etc/mysql/conf.d/master_init.sh
+          command: ["bash", "/mnt/configmap/master_sidecar.sh"]
           volumeMounts:
+            ## mysql配置目录
+            - name: conf
+              mountPath: /etc/mysql/conf.d
             ## 绑定ConfigMap中的配置文件
             - name: mysql-master-config
-              mountPath: /etc/mysql/conf.d
+              mountPath: /mnt/configmap
+            ## 数据文件绑定pvc
+            - name: mysql-master-data
+              mountPath: /var/lib/mysql
       volumes:
+        # mysql配置目录
+        - name: conf
+          emptyDir: {}
         # ConfigMap配置作为配置文件
         - name: mysql-master-config
           configMap:
@@ -116,8 +138,8 @@ spec:
                 path: master.cnf
               - key: create_replication_account_procedure.sql
                 path: create_replication_account_procedure.sql
-              - key: master_init.sh
-                path: master_init.sh
+              - key: master_sidecar.sh
+                path: master_sidecar.sh
   volumeClaimTemplates:
     - metadata:
         name: mysql-master-data

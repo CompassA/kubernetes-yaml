@@ -1,0 +1,143 @@
+---
+kind: ConfigMap
+apiVersion: v1
+metadata:
+  name: mysql-replica-config
+  namespace: tomato
+data:
+  # 从库配置文件
+  replica.cnf: |
+    [mysqld]
+    gtid_mode=ON
+    enforce-gtid-consistency=true
+    relay_log_recovery=ON
+    lower_case_table_names=1
+
+  # 从库初始化脚本
+  replica_init.sh: |
+    set -ex
+
+    # 获取POD序号
+    ORDINAL=$(echo $PODNAME | awk -F'-' '{print $NF}')
+
+    # 生成从库的server-id与配置文件
+    echo [mysqld] > /etc/mysql/conf.d/server-id.cnf
+    echo server-id=$((100 + $ORDINAL)) >> /etc/mysql/conf.d/server-id.cnf
+    cp /mnt/configmap/replica.cnf /etc/mysql/conf.d/my.cnf
+
+    # 全量拷贝
+    ## 这个文件夹存在时, 说明执行过拷贝, 不再执行后续的操作
+    if [[ -d /var/lib/mysql/mysql ]]; then
+        echo "clone had been executed, skip"
+        exit 0
+    fi
+
+    ## 获取被拷贝服务
+    SOURCE_URL=$MASTER_SERVICE
+
+    # 获取POD序号
+    # 是0代表是第一个从节点, 从主节点拷贝数据, 否则从前一个从节点拷贝数据
+    if [[ $ORDINAL -ne 0 ]]; then
+        PODNAME_PREFIX=$(echo $PODNAME | rev | cut -d- -f2- | rev)
+        SOURCE_URL=$PODNAME_PREFIX-$(($ORDINAL-1)).$REPLICA_SERVICE_NAME.$POD_NAMESPACE
+    fi
+
+    # 执行拷贝
+    ncat --recv-only $SOURCE_URL 3307 | xbstream -x -C /var/lib/mysql
+    xtrabackup --prepare --target-dir=/var/lib/mysql
+
+  start_replication_procedure.sql: |
+    USE mysql;
+
+    delimiter //
+
+    CREATE PROCEDURE IF NOT EXISTS StartReplication(IN source_host VARCHAR(4096),IN username VARCHAR(512),IN userpassword VARCHAR(512),IN executed_gtid_set VARCHAR(1024))
+    BEGIN
+        DECLARE config_cnt INT;
+        DECLARE replica_io_running VARCHAR(32);
+        DECLARE cur_host VARCHAR(4096);
+        DECLARE replica_sql_running VARCHAR(32);
+        
+        -- 查询是否执行过 change replication source
+        -- https://dev.mysql.com/doc/refman/8.4/en/performance-schema-replication-connection-configuration-table.html
+        SELECT COUNT(*) INTO config_cnt FROM performance_schema.replication_connection_configuration WHERE channel_name = '';
+        IF config_cnt = 0 THEN
+          
+            SET @@GLOBAL.GTID_PURGED=executed_gtid_set;
+
+            SET @change_replica_sql = CONCAT(
+                'change replication source to ',
+                'SOURCE_HOST=''', source_host, ''',',
+                'SOURCE_USER=''', username, ''',',
+                'SOURCE_PASSWORD=''', userpassword, ''',',
+                'SOURCE_PORT=3306, GET_SOURCE_PUBLIC_KEY=1, SOURCE_AUTO_POSITION=1'
+            );
+            PREPARE change_replica_stmt FROM @change_replica_sql;
+            EXECUTE change_replica_stmt;
+            DEALLOCATE PREPARE change_replica_stmt;
+
+            SELECT CONCAT('change replication source to ', source_host, ' success') AS message;
+        ELSE 
+            SELECT HOST INTO cur_host FROM performance_schema.replication_connection_configuration WHERE channel_name = '';
+            IF cur_host != source_host THEN    
+                SET @@GLOBAL.GTID_PURGED=executed_gtid_set;
+
+                SET @change_replica_sql = CONCAT(
+                    'change replication source to ',
+                    'SOURCE_HOST=''', source_host, ''',',
+                    'SOURCE_USER=''', username, ''',',
+                    'SOURCE_PASSWORD=''', userpassword, ''',',
+                    'SOURCE_PORT=3306, GET_SOURCE_PUBLIC_KEY=1, SOURCE_AUTO_POSITION=1'
+                );
+                PREPARE change_replica_stmt FROM @change_replica_sql;
+                EXECUTE change_replica_stmt;
+                DEALLOCATE PREPARE change_replica_stmt;
+
+                SELECT CONCAT('change replication source to ', source_host, ' success') AS message; 
+            ELSE 
+                SELECT CONCAT('change replication source to ', source_host, ' already executed') AS message;
+            END IF;
+            
+        END IF;
+
+        -- 查询I/O thread, reply thread状态, 判断主从是否开启
+        -- LAST_ERROR_MESSAGE
+        -- https://dev.mysql.com/doc/refman/8.4/en/performance-schema-replication-connection-status-table.html
+        -- https://dev.mysql.com/doc/refman/8.4/en/performance-schema-replication-applier-status-table.html
+        SELECT service_state INTO replica_io_running FROM performance_schema.replication_connection_status WHERE channel_name = '';
+        SELECT service_state INTO replica_sql_running FROM performance_schema.replication_applier_status WHERE channel_name = '';
+
+        IF replica_io_running != 'ON' OR replica_sql_running != 'ON' THEN
+            start replica;
+        ELSE
+            SELECT 'replica already started' AS message;
+        END IF;
+        
+        show replica status;
+    END // 
+
+    DELIMITER ;
+
+  replica_sidecar.sh: |
+    set -ex
+
+    # 等待mysql节点启动完成
+    until mysql -h 127.0.0.1 -uroot -p$MYSQL_ROOT_PASSWORD -e "SELECT 1"; do
+        echo "Waiting for mysql to be ready"
+        sleep 5
+    done
+
+    # 获取bin-log备份信息
+    # https://docs.percona.com/percona-xtrabackup/8.4/create-gtid-replica.html
+    cd /var/lib/mysql
+
+    executed_gtid_set=$(cat xtrabackup_binlog_info | awk '{print $NF}')
+
+    # 启动从节点复制
+    mysql -h 127.0.0.1 -uroot -p$MYSQL_ROOT_PASSWORD -e "$(</mnt/configmap/start_replication_procedure.sql)"
+    mysql -h 127.0.0.1 -uroot -p$MYSQL_ROOT_PASSWORD -e "call mysql.StartReplication('$MASTER_SERVICE', '$MYSQL_MASTER_DUMP_USER', '$MYSQL_MASTER_DUMP_PASSWORD','$executed_gtid_set')"
+
+
+    # 启动xtrabackup
+    exec ncat --listen --keep-open --send-only --max-conns=1 3307 -c \
+    "xtrabackup --backup --slave-info --stream=xbstream --host=127.0.0.1 --user=root --password=$MYSQL_ROOT_PASSWORD"
